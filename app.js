@@ -6,6 +6,9 @@ const bodyParser = require("body-parser");
 const SHA256 = require('crypto-js/sha256');
 const { db, addLevelDBData, getLevelDBData, echoDB, clearDB, numBlocks } = require('./levelSandbox');
 
+// Other constants
+const TimeoutRequestsWindowTime = 5 * 60 * 1000;
+
 /* ===== Block Class ==============================
 |  Class with a constructor for block 			   |
 |  ===============================================*/
@@ -206,8 +209,37 @@ class BlockController {
 	constructor(app) {
 		this.app = app;
 		this.blockchain = new Blockchain;
+		this.mempool = new BlockChainMempool;
+
+		// Stand up routes and conrollers
 		this.getBlockByIndex();
 		this.postNewBlock();
+		this.postRequestValidation();
+		this.echoMempool();
+	}
+
+	echoMempool() {
+		this.app.get("/echomempool", (req, res) => {
+
+			// Get a copy of the mempool
+			var retObj = this.mempool.EchoMempool();
+
+			// Return to the caller
+			res.status(200).json(retObj);
+		});
+	}
+
+	postRequestValidation() {
+		this.app.post("/requestValidation", (req, res) => {
+			// Read the request body data
+			var reqAddr = req.body.address;
+
+			// Add the request to the mempool
+			var retObj = this.mempool.AddRequestValidation(reqAddr);
+
+			// Return to the caller
+			res.status(200).json(retObj);
+		});
 	}
 
     /**
@@ -233,7 +265,7 @@ class BlockController {
 			if (idx >= totBlks || idx < 0) {
 				// Referring to a block that does not exist
 				console.log('ERROR: block with index:', stridx, 'does not exist');
-				res.status(404).send({ error: 'block # ' +  stridx + ' does not exist'});
+				res.status(404).send({ error: 'block # ' + stridx + ' does not exist' });
 				return;
 			}
 
@@ -276,6 +308,64 @@ class BlockController {
 			res.status(200).json(rBlock);
 		});
 	}
+}
+
+/**
+ * Class Definition for mempool
+ */
+class BlockChainMempool {
+
+	/**
+	 * Constructor to define the blockchain's mempool
+	 */
+	constructor() {
+		this.mempool = {};
+	}
+
+	/**
+     * Method to return the contents of the mempool
+     */
+	EchoMempool() {
+		console.log('DEBUG: The mempool is currently:', JSON.stringify(this.mempool));
+
+		return this.mempool;
+	}
+
+	/**
+     * Method to add a request to the mempool
+     */
+	AddRequestValidation(addr) {
+		// Does the object with key addr exist in the mempool?
+		if (this.mempool.hasOwnProperty(addr)) {
+			// Object already in the mempool; return the object to the caller
+			this.mempool[addr]['validationWindow'] = this.mempool[addr]['requestTimeStampExpire'] - Date.now(); // Update the validation window value
+
+			console.log('DEBUG: object already exists and returning:', JSON.stringify(this.mempool[addr]));  // TODO: remove debug statement
+			return this.mempool[addr];
+		}
+
+		// Construct an object to be placed in the mempool
+		var tmpObj = {};
+		tmpObj['walletAddress'] = addr;
+		tmpObj['requestTimeStamp'] = Date.now();
+		tmpObj['message'] = addr + ':' + tmpObj['requestTimeStamp'] + ':' + 'starRegistry';
+		tmpObj['validationWindow'] = TimeoutRequestsWindowTime;
+		tmpObj['requestTimeStampExpire'] = tmpObj['requestTimeStamp'] + TimeoutRequestsWindowTime;
+
+		// Add the object to the mempool
+		this.mempool[addr] = tmpObj;
+		console.log('DEBUG: just added this object to the mempool. The mempool is now:', JSON.stringify(this.mempool));  // TODO: remove debug statement
+
+		// Delete the mempool object sometime in the future
+		var thisMPool = this; // assign 'this' to a variable so it is preserved and referred to properly in the setTimeout function scope
+		setTimeout(function(){
+			console.log('DEBUG: deleting this address from the mempool:', addr); // TODO: remove debug statement
+			delete thisMPool.mempool[addr];
+		 }, TimeoutRequestsWindowTime );
+
+		return tmpObj;
+	}
+
 }
 
 new BlockAPI();
