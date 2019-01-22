@@ -229,8 +229,37 @@ class BlockController {
 		});
 	}
 
+	/**
+     * postRequestValidation declares a controller that responds to '/requestValidation'
+	 * The controller validates a star registry request
+     */
 	postRequestValidation() {
 		this.app.post("/requestValidation", (req, res) => {
+			// Read the request body data
+			var reqAddr = req.body.address;
+			var reqSignature = req.body.signature;
+
+			// Missing data?
+			if (reqAddr == "" || reqAddr == undefined || reqSignature == "" || reqSignature == undefined) {
+				// address or signature data is missing from the request
+				console.log('ERROR: address or signature data is missing');
+				res.status(400).json({ msg: "address or signature data is missing" });
+				return;
+			}
+
+			// Is there a request object in the mempool
+
+
+			// Add the request to the mempool
+			var retObj = this.mempool.AddRequestValidation(reqAddr);
+
+			// Return to the caller
+			res.status(200).json(retObj);
+		});
+	}
+
+	validateSignature() {
+		this.app.post("message-signature/validate", (req, res) => {
 			// Read the request body data
 			var reqAddr = req.body.address;
 
@@ -240,6 +269,7 @@ class BlockController {
 			// Return to the caller
 			res.status(200).json(retObj);
 		});
+
 	}
 
     /**
@@ -358,12 +388,48 @@ class BlockChainMempool {
 
 		// Delete the mempool object sometime in the future
 		var thisMPool = this; // assign 'this' to a variable so it is preserved and referred to properly in the setTimeout function scope
-		setTimeout(function(){
+		setTimeout(function () {
 			console.log('DEBUG: deleting this address from the mempool:', addr); // TODO: remove debug statement
 			delete thisMPool.mempool[addr];
-		 }, TimeoutRequestsWindowTime );
+		}, TimeoutRequestsWindowTime);
 
 		return tmpObj;
+	}
+
+	/**
+     * validateRequestByWallet validates an inbound signing request
+     */
+	validateRequestByWallet(inObj) {
+		// Does the object with key addr exist in the mempool?
+		var addr = inObj.address;
+		var sign = inObj.signature;
+		var retObj = {};
+		retObj.err = false;
+
+		// Fetch the object from the mempool
+		var tmpObj = this.mempool[addr];
+		if (tmpObj == undefined) {
+			// object not found - expired?
+			retObj.err = true;
+			retObj.msg = "no address object in the mempool";
+			return retObj;
+		}
+
+		// Has the current object expired?
+		if (tmpObj['requestTimeStampExpire'] - Date.now() < 0) {
+			// the object's expiration date has passed
+			retObj.err = true;
+			retObj.msg = "expiration date has passed";
+			retObj.obj = tmpObj['requestTimeStampExpire']
+
+			// delete the object from the mempool
+			delete this.mempool[addr];
+
+			return retObj;
+		}
+
+		// TODO: verify the signature
+
 	}
 
 }
