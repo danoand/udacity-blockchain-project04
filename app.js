@@ -4,10 +4,11 @@ const express = require("express");
 const bodyParser = require("body-parser");
 // Import the crypto-js sha256 module
 const SHA256 = require('crypto-js/sha256');
+const bitcoinMessage = require('bitcoinjs-message');
 const { db, addLevelDBData, getLevelDBData, echoDB, clearDB, numBlocks } = require('./levelSandbox');
 
 // Other constants
-const TimeoutRequestsWindowTime = 5 * 60 * 1000;
+const TimeoutRequestsWindowTime = 5 * 60 * 1000; 
 
 /* ===== Block Class ==============================
 |  Class with a constructor for block 			   |
@@ -214,8 +215,12 @@ class BlockController {
 		// Stand up routes and conrollers
 		this.getBlockByIndex();
 		this.postNewBlock();
+
 		this.postRequestValidation();
+		this.validateSignature();
+
 		this.echoMempool();
+		this.echoAccessList();
 	}
 
 	echoMempool() {
@@ -223,6 +228,17 @@ class BlockController {
 
 			// Get a copy of the mempool
 			var retObj = this.mempool.EchoMempool();
+
+			// Return to the caller
+			res.status(200).json(retObj);
+		});
+	}
+
+	echoAccessList() {
+		this.app.get("/echoaccesslist", (req, res) => {
+
+			// Get a copy of the mempool
+			var retObj = this.mempool.EchoAccessList();
 
 			// Return to the caller
 			res.status(200).json(retObj);
@@ -237,18 +253,14 @@ class BlockController {
 		this.app.post("/requestValidation", (req, res) => {
 			// Read the request body data
 			var reqAddr = req.body.address;
-			var reqSignature = req.body.signature;
 
 			// Missing data?
-			if (reqAddr == "" || reqAddr == undefined || reqSignature == "" || reqSignature == undefined) {
+			if (reqAddr == "" || reqAddr == undefined) {
 				// address or signature data is missing from the request
-				console.log('ERROR: address or signature data is missing');
-				res.status(400).json({ msg: "address or signature data is missing" });
+				console.log('ERROR: address data is missing');
+				res.status(400).json({ msg: "address data is missing" });
 				return;
 			}
-
-			// Is there a request object in the mempool
-
 
 			// Add the request to the mempool
 			var retObj = this.mempool.AddRequestValidation(reqAddr);
@@ -259,12 +271,52 @@ class BlockController {
 	}
 
 	validateSignature() {
-		this.app.post("message-signature/validate", (req, res) => {
+
+		this.app.post("/message-signature/validate", (req, res) => {
 			// Read the request body data
 			var reqAddr = req.body.address;
+			var reqSign = req.body.signature;
 
-			// Add the request to the mempool
-			var retObj = this.mempool.AddRequestValidation(reqAddr);
+			// Missing data?
+			if (reqAddr == "" || reqAddr == undefined || reqSign == "" || reqSign == undefined) {
+				// address or signature data is missing from the request
+				console.log('ERROR: address or signature data is missing');
+				res.status(400).json({ msg: "address or signature data is missing" });
+				return;
+			}
+
+			// Is there a request object in the mempool?
+			var tObj = this.mempool.GetFromMempool(reqAddr);
+			if (!tObj.valid) {
+				// no valid object resident in the mempool
+				console.log('INFO: no valid mempool object found');
+				res.status(400).json({ msg: "no valid mempool object found" });
+				return;
+			}
+
+			// Verify the message
+			var vObj = this.mempool.validateRequestByWallet(reqAddr, reqSign);
+			if (!vObj.verified) {
+				console.log('INFO: signed message not verified');
+				res.status(400).json({ msg: vObj.msg });
+				return;
+			}
+
+			// Grant access to the user register a single star
+			this.mempool.GrantAccessToUser(reqAddr);
+
+			// Construct the return object
+			var retObj = {};
+			retObj["registerStar"] = true;
+
+			var subObj = {};
+			subObj["address"] = tObj['data']['walletAddress'];
+			subObj["requestTimeStamp"] = tObj['data']['requestTimeStamp'];
+			subObj["message"] = tObj['data']['message'];
+			subObj["validationWindow"] = tObj['data']['validationWindow'];
+			subObj["messageSignature"] = true;
+
+			retObj["status"] = subObj;
 
 			// Return to the caller
 			res.status(200).json(retObj);
@@ -350,6 +402,7 @@ class BlockChainMempool {
 	 */
 	constructor() {
 		this.mempool = {};
+		this.accessgranted = {};
 	}
 
 	/**
@@ -359,6 +412,44 @@ class BlockChainMempool {
 		console.log('DEBUG: The mempool is currently:', JSON.stringify(this.mempool));
 
 		return this.mempool;
+	}
+
+	EchoAccessList() {
+		console.log('DEBUG: The access list is currently:', JSON.stringify(this.accessgranted));
+
+		return this.accessgranted;
+	}
+
+	/**
+     * GetFromMempool returns a valid (not expired) object from the mempool
+     */
+	GetFromMempool(addr) {
+		var retObj = {};
+		retObj["valid"] = false;
+
+		// Fetch the object from the mempool
+		var tmpObj = this.mempool[addr];
+		if (tmpObj == undefined) {
+			// object not found - expired?
+			return retObj;
+		}
+
+		// Has the current object expired?
+		var wndo = tmpObj['requestTimeStampExpire'] - Date.now();
+		if (wndo <= 0) {
+			// the object's expiration date has passed
+			// delete the object from the mempool
+			delete this.mempool[addr];
+
+			return retObj;
+		}
+
+		// Valid mempool object
+		retObj["valid"] = true;
+		tmpObj['validationWindow'] = wndo;
+		retObj["data"] = tmpObj;
+
+		return retObj;
 	}
 
 	/**
@@ -399,18 +490,15 @@ class BlockChainMempool {
 	/**
      * validateRequestByWallet validates an inbound signing request
      */
-	validateRequestByWallet(inObj) {
+	validateRequestByWallet(addr, sgtr) {
 		// Does the object with key addr exist in the mempool?
-		var addr = inObj.address;
-		var sign = inObj.signature;
 		var retObj = {};
-		retObj.err = false;
+		retObj.verified = false;
 
 		// Fetch the object from the mempool
 		var tmpObj = this.mempool[addr];
 		if (tmpObj == undefined) {
 			// object not found - expired?
-			retObj.err = true;
 			retObj.msg = "no address object in the mempool";
 			return retObj;
 		}
@@ -418,9 +506,7 @@ class BlockChainMempool {
 		// Has the current object expired?
 		if (tmpObj['requestTimeStampExpire'] - Date.now() < 0) {
 			// the object's expiration date has passed
-			retObj.err = true;
 			retObj.msg = "expiration date has passed";
-			retObj.obj = tmpObj['requestTimeStampExpire']
 
 			// delete the object from the mempool
 			delete this.mempool[addr];
@@ -428,8 +514,35 @@ class BlockChainMempool {
 			return retObj;
 		}
 
-		// TODO: verify the signature
+		// Validate the signed message
+		var isValid = bitcoinMessage.verify(tmpObj["message"], addr, sgtr);
+		if (!isValid) {
+			// the message is not valid
+			retObj.msg = "invalid/unverified message";
+			return retObj;
+		}
 
+		// Verified signed message
+		retObj.verified = true;
+		retObj.msg = "verified signed message";
+
+		return retObj;
+	}
+
+	/**
+     * GrantAccessToUser grants access to a user (address) to register a single star
+     */
+	GrantAccessToUser(addr) {
+		this.accessgranted[addr] = true;
+		// TODO: log a message?
+	}
+
+	/**
+     * RemoveAccessFromUser removes access from a user (address) to register a single star
+     */
+	RemoveAccessFromUser(addr) {
+		delete this.accessgranted[addr];
+		// TODO: log a message?
 	}
 
 }
