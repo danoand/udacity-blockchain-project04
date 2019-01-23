@@ -80,6 +80,10 @@ function getLevelDBDataByHash(hsh) {
         console.log("DEBUG: in 'on data' with block data:", data.value);
 
         var tObj = JSON.parse(data.value);
+
+        if (tObj) {
+          
+        }
         if (tObj.hash != undefined) {
           // object has a has property of some type
           if (tObj.hash == hsh) {
@@ -97,11 +101,46 @@ function getLevelDBDataByHash(hsh) {
   });
 }
 
+// Fetch block by address
+function getLevelDBDataByAddress(addr) {
+  let blocks = [];
+
+  return new Promise((resolve, reject) => {
+    db.createReadStream()
+      .on('data', (data) => {
+        console.log("DEBUG: in 'on data' with block data:", data.value);
+
+        var tObj = JSON.parse(data.value);
+        if (tObj.body == undefined) {
+          // no body property present
+          return;
+        }
+        if (tObj.body.address == undefined) {
+          // no address property present
+          return;
+        }
+
+        // Matching address value?
+        if (tObj.body.address == addr) {
+          blocks.push(tObj);
+        }
+      })
+      .on('error', function (err) { console.log('Error finding block by address:', err); reject(err) })
+      .on('close', () => { 
+        if (blocks.length == null) {
+          console.log("DEBUG: returning a null block!", hsh);
+        }
+        resolve(blocks);
+       });
+  });
+}
+
 module.exports = {
   db: db,
   addLevelDBData: addLevelDBData,
   getLevelDBData: getLevelDBData,
   getLevelDBDataByHash: getLevelDBDataByHash,
+  getLevelDBDataByAddress: getLevelDBDataByAddress,
   echoDB: echoDB,
   clearDB: clearDB,
   numBlocks: numBlocks,

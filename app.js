@@ -6,10 +6,10 @@ const bodyParser = require("body-parser");
 const SHA256 = require('crypto-js/sha256');
 const bitcoinMessage = require('bitcoinjs-message');
 const hex2ascii = require('hex2ascii');
-const { db, addLevelDBData, getLevelDBData, echoDB, clearDB, numBlocks, getLevelDBDataByHash } = require('./levelSandbox');
+const { db, addLevelDBData, getLevelDBData, echoDB, clearDB, numBlocks, getLevelDBDataByHash, getLevelDBDataByAddress } = require('./levelSandbox');
 
 // Other constants
-const TimeoutRequestsWindowTime = 5 * 60 * 1000; 
+const TimeoutRequestsWindowTime = 5 * 60 * 1000;
 
 /* ===== Block Class ==============================
 |  Class with a constructor for block 			   |
@@ -89,6 +89,12 @@ class Blockchain {
 	async getBlockByHash(blockhash) {
 		var tmpBlock = await getLevelDBDataByHash(blockhash);
 		return JSON.parse(tmpBlock);
+	}
+
+	// get block by address value
+	async getBlockByAddress(addr) {
+		var tmpBlocks = await getLevelDBDataByAddress(addr);
+		return tmpBlocks;
 	}
 
 	// validate block
@@ -222,6 +228,7 @@ class BlockController {
 		// Stand up routes and conrollers
 		this.getBlockByIndex();
 		this.getBlockByHash();
+		this.getBlockByAddress();
 		this.postNewBlock();
 
 		this.postRequestValidation();
@@ -445,8 +452,8 @@ class BlockController {
 			// Create a new Block
 			var tBlock = new Block;
 			star.story = Buffer(star.story).toString('hex');
-			var tBody = {"address": addr, "star": star};
-			tBlock.body = tBody; 
+			var tBody = { "address": addr, "star": star };
+			tBlock.body = tBody;
 
 			// Add block to the blockchain
 			var rBlock = await this.blockchain.addBlock(tBlock);
@@ -530,6 +537,75 @@ class BlockController {
 			// Return the data to the caller
 			console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
 			res.status(200).json(jobj);
+		});
+	}
+
+	/**
+     * Implement a GET Endpoint to retrieve one or more blocks by address value, url: "/stars/address:<addrvalue>"
+     */
+	getBlockByAddress() {
+		this.app.get(/\/stars\/address:.+/, async (req, res) => {
+			// Extract the hash value
+			var path = req.path;
+			var pathArr = path.split("/");
+			if (pathArr.length != 3) {
+				// invalid path
+				console.log('ERROR: invalid path:', path);
+				res.status(400).send({ error: 'invalid path: ' + path });
+				return;
+			}
+
+			// Extract the hash value
+			var hValArr = pathArr[2].split(":");
+			if (hValArr.length <= 1) {
+				// missing hash value
+				console.log('ERROR: missing address value');
+				res.status(400).send({ error: 'missing address value' });
+				return;
+			}
+			var addr = hValArr[1];
+			if (addr == "") {
+				// empty hash value
+				console.log('ERROR: empty address value');
+				res.status(400).send({ error: 'empty address value' });
+				return;
+			}
+
+			// Fetch the block index by hash
+			console.log("DEBUG: getting block with address value:", addr);
+			var jarr = await this.blockchain.getBlockByAddress(addr);
+
+			// Null value?
+			if (jarr.length == 0) {
+				console.log('INFO: found no blocks when searching for an address:', addr);
+				res.status(200).send({ msg: 'found no blocks when searching for an address' });
+				return;
+			}
+
+			// Iterate through the returned blocks
+			for (let i = 0; i < jarr.length; i++) {
+
+				// Is there a star property?
+				if (jarr[i].body.star == undefined) {
+					// current block does not have a star property
+					continue;
+				}
+
+				// Is there a story property?
+				if (jarr[i].body.star.story == undefined) {
+					// current block does not have a star property
+					continue;
+				}
+
+				// Decode hex story (if it's a string value)
+				if (typeof jarr[i].body.star.story == 'string') {
+					jarr[i].body.star.storyDecoded = hex2ascii(jarr[i].body.star.story);
+				}
+			}
+
+			// Return the data to the caller
+			console.log('INFO: returning to the caller with an array blocks:', JSON.stringify(jarr));
+			res.status(200).json(jarr);
 		});
 	}
 }
