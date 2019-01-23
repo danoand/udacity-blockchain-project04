@@ -143,5 +143,5 @@ module.exports = {
   getLevelDBDataByAddress: getLevelDBDataByAddress,
   echoDB: echoDB,
   clearDB: clearDB,
-  numBlocks: numBlocks,
+  numBlocks: numBlocks
 }

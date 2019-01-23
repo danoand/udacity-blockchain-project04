@@ -79,25 +79,25 @@ class Blockchain {
 		return nBlocks - 1;
 	}
 
-	// get block by height value
+	// Get block by height value
 	async getBlock(blockHeight) {
 		var tmpBlock = await getLevelDBData(blockHeight);
 		return JSON.parse(tmpBlock);
 	}
 
-	// get block by hash value
+	// Get block by hash value
 	async getBlockByHash(blockhash) {
 		var tmpBlock = await getLevelDBDataByHash(blockhash);
 		return JSON.parse(tmpBlock);
 	}
 
-	// get block by address value
+	// Get block by address value
 	async getBlockByAddress(addr) {
 		var tmpBlocks = await getLevelDBDataByAddress(addr);
 		return tmpBlocks;
 	}
 
-	// validate block
+	// Validate block
 	async validateBlock(blockHeight) {
 		// get block object
 		var tmpBlock = await this.getBlock(blockHeight);
@@ -208,7 +208,6 @@ class BlockAPI {
 			console.log(`Server Listening for port: ${self.app.get("port")}`);
 		});
 	}
-
 }
 
 /**
@@ -230,7 +229,6 @@ class BlockController {
 		this.getBlockByHash();
 		this.getBlockByAddress();
 		this.postNewBlock();
-
 		this.postRequestValidation();
 		this.validateSignature();
 
@@ -238,22 +236,23 @@ class BlockController {
 		this.echoAccessList();
 	}
 
+	// echoMempool returns the contents of the mempool
 	echoMempool() {
 		this.app.get("/echomempool", (req, res) => {
 
 			// Get a copy of the mempool
-			var retObj = this.mempool.EchoMempool();
+			var retObj = this.mempool.echoMempool();
 
 			// Return to the caller
 			res.status(200).json(retObj);
 		});
 	}
-
+    // echoAccessList returns the contents of the access list
 	echoAccessList() {
 		this.app.get("/echoaccesslist", (req, res) => {
 
 			// Get a copy of the mempool
-			var retObj = this.mempool.EchoAccessList();
+			var retObj = this.mempool.echoAccessList();
 
 			// Return to the caller
 			res.status(200).json(retObj);
@@ -278,13 +277,16 @@ class BlockController {
 			}
 
 			// Add the request to the mempool
-			var retObj = this.mempool.AddRequestValidation(reqAddr);
+			var retObj = this.mempool.addRequestValidation(reqAddr);
 
 			// Return to the caller
 			res.status(200).json(retObj);
 		});
 	}
 
+	/**
+     * validateSignature validates a signed message and returns a response
+     */
 	validateSignature() {
 
 		this.app.post("/message-signature/validate", (req, res) => {
@@ -301,7 +303,7 @@ class BlockController {
 			}
 
 			// Is there a request object in the mempool?
-			var tObj = this.mempool.GetFromMempool(reqAddr);
+			var tObj = this.mempool.getFromMempool(reqAddr);
 			if (!tObj.valid) {
 				// no valid object resident in the mempool
 				console.log('INFO: no valid mempool object found');
@@ -318,7 +320,7 @@ class BlockController {
 			}
 
 			// Grant access to the user register a single star
-			this.mempool.GrantAccessToUser(reqAddr);
+			this.mempool.grantAccessToUser(reqAddr);
 
 			// Construct the return object
 			var retObj = {};
@@ -442,7 +444,7 @@ class BlockController {
 			}
 
 			// Has the inbound address been granted access to create a star?
-			if (!this.mempool.HasGrantAccessToUser(addr)) {
+			if (!this.mempool.hasGrantAccessToUser(addr)) {
 				// this address (user) has not been granted access to create a star
 				console.log('NOT AUTHORIZED: user has not been granted access to create a star:', addr);
 				res.status(401).send({ error: 'user has not been granted access to create a star' });
@@ -462,8 +464,8 @@ class BlockController {
 			console.log('INFO: just created a new block:', JSON.stringify(rBlock));
 
 			// Clean up mempool validated & granted access maps
-			this.mempool.RemoveAccessFromUser(addr);
-			this.mempool.RemoveFromMempool(addr);
+			this.mempool.removeAccessFromUser(addr);
+			this.mempool.removeFromMempool(addr);
 
 			// Return to caller
 			res.status(200).json(rBlock);
@@ -503,7 +505,6 @@ class BlockController {
 			}
 
 			// Fetch the block index by hash
-			console.log("DEBUG: getting block with hash value:", hsh);
 			var jobj = await this.blockchain.getBlockByHash(hsh);
 
 			// Null value?
@@ -572,7 +573,6 @@ class BlockController {
 			}
 
 			// Fetch the block index by hash
-			console.log("DEBUG: getting block with address value:", addr);
 			var jarr = await this.blockchain.getBlockByAddress(addr);
 
 			// Null value?
@@ -626,22 +626,20 @@ class BlockChainMempool {
 	/**
      * Method to return the contents of the mempool
      */
-	EchoMempool() {
-		console.log('DEBUG: The mempool is currently:', JSON.stringify(this.mempool));
-
+	echoMempool() {
+		console.log('INFO: The mempool is currently:', JSON.stringify(this.mempool));
 		return this.mempool;
 	}
 
-	EchoAccessList() {
-		console.log('DEBUG: The access list is currently:', JSON.stringify(this.accessgranted));
-
+	echoAccessList() {
+		console.log('INFO: The access list is currently:', JSON.stringify(this.accessgranted));
 		return this.accessgranted;
 	}
 
 	/**
-     * GetFromMempool returns a valid (not expired) object from the mempool
+     * getFromMempool returns a valid (not expired) object from the mempool
      */
-	GetFromMempool(addr) {
+	getFromMempool(addr) {
 		var retObj = {};
 		retObj["valid"] = false;
 
@@ -671,22 +669,21 @@ class BlockChainMempool {
 	}
 
 	/**
-     * RemoveFromMempool removes an object from the mempool
+     * removeFromMempool removes an object from the mempool
      */
-	RemoveFromMempool(addr) {
+	removeFromMempool(addr) {
 		delete this.mempool[addr];
 	}
 
 	/**
      * Method to add a request to the mempool
      */
-	AddRequestValidation(addr) {
+	addRequestValidation(addr) {
 		// Does the object with key addr exist in the mempool?
 		if (this.mempool.hasOwnProperty(addr)) {
 			// Object already in the mempool; return the object to the caller
 			this.mempool[addr]['validationWindow'] = this.mempool[addr]['requestTimeStampExpire'] - Date.now(); // Update the validation window value
 
-			console.log('DEBUG: object already exists and returning:', JSON.stringify(this.mempool[addr]));  // TODO: remove debug statement
 			return this.mempool[addr];
 		}
 
@@ -700,12 +697,10 @@ class BlockChainMempool {
 
 		// Add the object to the mempool
 		this.mempool[addr] = tmpObj;
-		console.log('DEBUG: just added this object to the mempool. The mempool is now:', JSON.stringify(this.mempool));  // TODO: remove debug statement
 
 		// Delete the mempool object sometime in the future
 		var thisMPool = this; // assign 'this' to a variable so it is preserved and referred to properly in the setTimeout function scope
 		setTimeout(function () {
-			console.log('DEBUG: deleting this address from the mempool:', addr); // TODO: remove debug statement
 			delete thisMPool.mempool[addr];
 		}, TimeoutRequestsWindowTime);
 
@@ -755,17 +750,16 @@ class BlockChainMempool {
 	}
 
 	/**
-     * GrantAccessToUser grants access to a user (address) to register a single star
+     * grantAccessToUser grants access to a user (address) to register a single star
      */
-	GrantAccessToUser(addr) {
+	grantAccessToUser(addr) {
 		this.accessgranted[addr] = true;
-		// TODO: log a message?
 	}
 
 	/**
-     * HasGrantAccessToUser determines if an address (user) has granted access
+     * hasGrantAccessToUser determines if an address (user) has granted access
      */
-	HasGrantAccessToUser(addr) {
+	hasGrantAccessToUser(addr) {
 		var rval = false;
 		if (this.accessgranted[addr]) {
 			rval = true;
@@ -775,11 +769,10 @@ class BlockChainMempool {
 	}
 
 	/**
-     * RemoveAccessFromUser removes access from a user (address) to register a single star
+     * removeAccessFromUser removes access from a user (address) to register a single star
      */
-	RemoveAccessFromUser(addr) {
+	removeAccessFromUser(addr) {
 		delete this.accessgranted[addr];
-		// TODO: log a message?
 	}
 
 }
