@@ -70,10 +70,38 @@ async function echoDB() {
     });
 }
 
+// Fetch block by hash
+function getLevelDBDataByHash(hsh) {
+  let block = null;
+
+  return new Promise((resolve, reject) => {
+    db.createReadStream()
+      .on('data', (data) => {
+        console.log("DEBUG: in 'on data' with block data:", data.value);
+
+        var tObj = JSON.parse(data.value);
+        if (tObj.hash != undefined) {
+          // object has a has property of some type
+          if (tObj.hash == hsh) {
+            block = data.value;
+          }
+        }
+      })
+      .on('error', function (err) { console.log('Error finding block by hash:', err); reject(err) })
+      .on('close', () => { 
+        if (block == null) {
+          console.log("DEBUG: returning a null block!", hsh);
+        }
+        resolve(block);
+       });
+  });
+}
+
 module.exports = {
   db: db,
   addLevelDBData: addLevelDBData,
   getLevelDBData: getLevelDBData,
+  getLevelDBDataByHash: getLevelDBDataByHash,
   echoDB: echoDB,
   clearDB: clearDB,
   numBlocks: numBlocks,

@@ -6,3 +6,9 @@ chaindata/LOCK
 chaindata/LOG
 chaindata/LOG.old
 chaindata/MANIFEST-000045
+chaindata/000008.ldb
+chaindata/000011.ldb
+chaindata/000024.log
+chaindata/MANIFEST-000023
+chaindata/000016.log
+chaindata/MANIFEST-000015

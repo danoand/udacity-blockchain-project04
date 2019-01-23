@@ -5,7 +5,8 @@ const bodyParser = require("body-parser");
 // Import the crypto-js sha256 module
 const SHA256 = require('crypto-js/sha256');
 const bitcoinMessage = require('bitcoinjs-message');
-const { db, addLevelDBData, getLevelDBData, echoDB, clearDB, numBlocks } = require('./levelSandbox');
+const hex2ascii = require('hex2ascii');
+const { db, addLevelDBData, getLevelDBData, echoDB, clearDB, numBlocks, getLevelDBDataByHash } = require('./levelSandbox');
 
 // Other constants
 const TimeoutRequestsWindowTime = 5 * 60 * 1000; 
@@ -78,9 +79,15 @@ class Blockchain {
 		return nBlocks - 1;
 	}
 
-	// get block
+	// get block by height value
 	async getBlock(blockHeight) {
 		var tmpBlock = await getLevelDBData(blockHeight);
+		return JSON.parse(tmpBlock);
+	}
+
+	// get block by hash value
+	async getBlockByHash(blockhash) {
+		var tmpBlock = await getLevelDBDataByHash(blockhash);
 		return JSON.parse(tmpBlock);
 	}
 
@@ -214,6 +221,7 @@ class BlockController {
 
 		// Stand up routes and conrollers
 		this.getBlockByIndex();
+		this.getBlockByHash();
 		this.postNewBlock();
 
 		this.postRequestValidation();
@@ -325,7 +333,7 @@ class BlockController {
 	}
 
     /**
-     * Implement a GET Endpoint to retrieve a block by index, url: "/api/block/:index"
+     * Implement a GET Endpoint to retrieve a block by index, url: "/block/:index"
      */
 	getBlockByIndex() {
 		this.app.get("/block/:index", async (req, res) => {
@@ -352,42 +360,176 @@ class BlockController {
 			}
 
 			// Fetch the block index by ':index'
-			var jstr = await this.blockchain.getBlock(idx);
+			var jobj = await this.blockchain.getBlock(idx);
+
+			// Is there a star property?
+			if (jobj.body.star == undefined) {
+				// current block does not have a star property - return
+				console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
+				res.status(200).json(jobj);
+				return;
+			}
+
+			// Is there a story property?
+			if (jobj.body.star.story == undefined) {
+				// current block does not have a star property - return
+				console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
+				res.status(200).json(jobj);
+				return;
+			}
+
+			// Decode hex story (if it's a string value)
+			if (typeof jobj.body.star.story == 'string') {
+				jobj.body.star.storyDecoded = hex2ascii(jobj.body.star.story);
+			}
 
 			// Return the data to the caller
-			console.log('INFO: returning to the caller with block:', jstr);
-			res.status(200).json(jstr);
+			console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
+			res.status(200).json(jobj);
 		});
 	}
 
     /**
-     * Implement a POST Endpoint to add a new Block, url: "/api/block"
+     * Implement a POST Endpoint to add a new Block, url: "/block"
      */
 	postNewBlock() {
 		this.app.post("/block", async (req, res) => {
-			// Read the request body data
-			var rBody = req.body.body;
+			// Grab the request body data
+			var addr = req.body.address;
+			var star = req.body.star;
 
 			// Is the request body empty?
-			if (rBody == undefined || rBody == "") {
+			if (addr == undefined || addr == "" || star == undefined || star == "") {
 				// block data missing
-				console.log('ERROR: block data is missing; check your request and try again');
-				res.status(400).send({ error: 'block data is missing; check your request and try again' });
+				console.log('ERROR: request data is missing; check your request and try again');
+				res.status(400).send({ error: 'request data is missing; check your request and try again' });
+				return;
+			}
+
+			// Is star data missing?
+			if (typeof star !== 'object' || star == null) {
+				// star data is not an object (as expected)
+				console.log('ERROR: star data is missing or invalid; check your request and try again');
+				res.status(400).send({ error: 'star data is missing or invalid; check your request and try again' });
+				return;
+			}
+
+			// Are star properties missing?
+			if (star.dec == undefined || star.dec == "") {
+				// star data is missing the dec property
+				console.log('ERROR: star dec property is missing; check your request and try again');
+				res.status(400).send({ error: 'star dec property is missing; check your request and try again' });
+				return;
+			}
+			if (star.ra == undefined || star.ra == "") {
+				// star data is missing the ra property
+				console.log('ERROR: star ra property is missing; check your request and try again');
+				res.status(400).send({ error: 'star ra property is missing; check your request and try again' });
+				return;
+			}
+			if (star.story == undefined || star.story == "") {
+				// star data is missing the story property
+				console.log('ERROR: star story property is missing; check your request and try again');
+				res.status(400).send({ error: 'star story property is missing; check your request and try again' });
+				return;
+			}
+
+			// Has the inbound address been granted access to create a star?
+			if (!this.mempool.HasGrantAccessToUser(addr)) {
+				// this address (user) has not been granted access to create a star
+				console.log('NOT AUTHORIZED: user has not been granted access to create a star:', addr);
+				res.status(401).send({ error: 'user has not been granted access to create a star' });
 				return;
 			}
 
 			// Create a new Block
 			var tBlock = new Block;
-			tBlock.body = rBody; // Set the Block data
+			star.story = Buffer(star.story).toString('hex');
+			var tBody = {"address": addr, "star": star};
+			tBlock.body = tBody; 
 
 			// Add block to the blockchain
 			var rBlock = await this.blockchain.addBlock(tBlock);
 
 			// Write informational console messages
-			console.log('INFO: just created a new block with data:', rBlock);
+			console.log('INFO: just created a new block:', JSON.stringify(rBlock));
 
-			// Return to the caller
+			// Clean up mempool validated & granted access maps
+			this.mempool.RemoveAccessFromUser(addr);
+			this.mempool.RemoveFromMempool(addr);
+
+			// Return to caller
 			res.status(200).json(rBlock);
+			return;
+		});
+	}
+
+    /**
+     * Implement a GET Endpoint to retrieve a block by hash, url: "/stars/hash:<hashvalue>"
+     */
+	getBlockByHash() {
+		this.app.get(/\/stars\/hash:.+/, async (req, res) => {
+			// Extract the hash value
+			var path = req.path;
+			var pathArr = path.split("/");
+			if (pathArr.length != 3) {
+				// invalid path
+				console.log('ERROR: invalid path:', path);
+				res.status(400).send({ error: 'invalid path: ' + path });
+				return;
+			}
+
+			// Extract the hash value
+			var hValArr = pathArr[2].split(":");
+			if (hValArr.length <= 1) {
+				// missing hash value
+				console.log('ERROR: missing hash value');
+				res.status(400).send({ error: 'missing hash value' });
+				return;
+			}
+			var hsh = hValArr[1];
+			if (hsh == "") {
+				// empty hash value
+				console.log('ERROR: empty hash value');
+				res.status(400).send({ error: 'empty hash value' });
+				return;
+			}
+
+			// Fetch the block index by hash
+			console.log("DEBUG: getting block with hash value:", hsh);
+			var jobj = await this.blockchain.getBlockByHash(hsh);
+
+			// Null value?
+			if (jobj == null) {
+				console.log('ERROR: found a null value when searching for a block with hash:', hsh);
+				res.status(400).send({ error: 'found a null value when searching for a block' });
+				return;
+			}
+
+			// Is there a star property?
+			if (jobj.body.star == undefined) {
+				// current block does not have a star property - return
+				console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
+				res.status(200).json(jobj);
+				return;
+			}
+
+			// Is there a story property?
+			if (jobj.body.star.story == undefined) {
+				// current block does not have a star property - return
+				console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
+				res.status(200).json(jobj);
+				return;
+			}
+
+			// Decode hex story (if it's a string value)
+			if (typeof jobj.body.star.story == 'string') {
+				jobj.body.star.storyDecoded = hex2ascii(jobj.body.star.story);
+			}
+
+			// Return the data to the caller
+			console.log('INFO: returning to the caller with block:', JSON.stringify(jobj));
+			res.status(200).json(jobj);
 		});
 	}
 }
@@ -450,6 +592,13 @@ class BlockChainMempool {
 		retObj["data"] = tmpObj;
 
 		return retObj;
+	}
+
+	/**
+     * RemoveFromMempool removes an object from the mempool
+     */
+	RemoveFromMempool(addr) {
+		delete this.mempool[addr];
 	}
 
 	/**
@@ -535,6 +684,18 @@ class BlockChainMempool {
 	GrantAccessToUser(addr) {
 		this.accessgranted[addr] = true;
 		// TODO: log a message?
+	}
+
+	/**
+     * HasGrantAccessToUser determines if an address (user) has granted access
+     */
+	HasGrantAccessToUser(addr) {
+		var rval = false;
+		if (this.accessgranted[addr]) {
+			rval = true;
+		}
+
+		return rval;
 	}
 
 	/**
